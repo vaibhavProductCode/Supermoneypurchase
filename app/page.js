@@ -28,11 +28,64 @@ const RUPEES_PER_COIN = 0.9;
 const toNum = (s) => (s ? Number(s.replace(/[^\d]/g, "")) : 0);
 const fmt = (n) => n.toLocaleString("en-IN");
 
+const DECISIONS = [
+  {
+    title: "Store triggered by a gameplay milestone, not a persistent 'Shop' tab",
+    why: "A persistent tab imports e-commerce browse intent into a context where no such intent exists. Triggering on an earned milestone uses achievement as the intent signal — the player has a reason to look, the same way a real shopper has a reason to walk into a store.",
+    alt: "A persistent tab (standard e-commerce pattern) — rejected because it assumes browsing intent that doesn't exist mid-gameplay, and competes with the game's own navigation for attention.",
+  },
+  {
+    title: "Coins + cash blended pricing, not coins-only or cash-only",
+    why: "A coins-only store caps monetization and isn't really commerce. A cash-only store ignores why PlaySuper exists at all. Blending them keeps players motivated to keep playing for a bigger discount — reinforcing the retention loop PlaySuper sells to studios.",
+    alt: "Coins-only (zero revenue, no real commerce) and cash-only (removes the entire gameplay-reward connection, becomes a generic ad unit) — both rejected.",
+  },
+  {
+    title: "4-6 curated items per Reward Drop, not a full catalog browse",
+    why: "PlaySuper's real catalog spans 5,000+ brands. Shown in full, that's overwhelming and breaks the 'this was earned for me' feeling. A small, cohort-curated set keeps it feeling like a reward, not a marketplace.",
+    alt: "Full searchable catalog — rejected because it reintroduces browse/compare behavior this product is trying to avoid, and doesn't solve PlaySuper's real catalog-relevance problem.",
+  },
+  {
+    title: "Checkout stays inside the same in-game frame — no redirect",
+    why: "Any hand-off to a browser tab or separate payment app breaks immersion at the exact moment we've earned the player's attention. A single confirm tap inside the same sheet keeps the whole loop inside the game.",
+    alt: "Redirect to a web checkout (a realistic engineering shortcut) — rejected here because it undermines the core 'don't break immersion' thesis, even though a real SDK might take that shortcut.",
+  },
+  {
+    title: "Post-purchase gives bonus XP and a streak mechanic, not just an order confirmation",
+    why: "A generic 'order confirmed' screen is pure e-commerce language and ends the loop. Rewarding the purchase with XP and a streak ties the moment back into the game's own value system, and gives an explicit reason to return next session.",
+    alt: "Plain confirmation screen — rejected because it optimizes for a single conversion event and ignores PlaySuper's actual success metric (retention), not just whether a purchase happened.",
+  },
+  {
+    title: "A fallback path when curated picks miss ('Refresh my picks')",
+    why: "Behavioral-cohort personalization will sometimes be wrong. Dead-ending a player whose picks don't land is a silent drop-off we'd never see in a funnel chart unless we explicitly design and track the fallback.",
+    alt: "No fallback (simplest to build) — rejected because it hides a real failure mode rather than handling it.",
+  },
+  {
+    title: "Dynamic coin/cash rebalancing when a player has insufficient coins",
+    why: "A fixed split only works for players who happen to have exactly enough coins. Real players will have varying balances; the mix should rebalance toward more cash rather than blocking the purchase outright.",
+    alt: "Hard block ('not enough coins', standard e-commerce out-of-stock pattern) — rejected because it kills a purchase PlaySuper could still capture via cash, hurting their own monetization.",
+  },
+  {
+    title: "Trigger frequency cools down after one redemption",
+    why: "An interruptive toast on every level-up would get tuned out fast (banner blindness). After one redemption, the trigger shifts to a quieter streak/cooldown state instead of repeating the same popup.",
+    alt: "Always-on toast every milestone (easiest to build) — rejected because it optimizes for short-term visibility at the cost of long-term trigger fatigue and opt-out behavior.",
+  },
+];
+
+const FUNNEL = [
+  ["Trigger fires (level-up)", "Trigger-to-view rate", "No frequency cap → banner blindness, opt-out over time", "Cooldown state after first redemption; trigger quiets into a streak pill"],
+  ["Open Drop vs. Later", "Open rate", "Repeated 'Later' taps have no consequence modeled", "Dismissal tracked as the first real drop-off point in the funnel"],
+  ["Store home (browse)", "Browse-to-tap rate", "Cohort personalization can miss — no recovery path", "\u201cRefresh my picks\u201d fallback swaps in an alternate curated set"],
+  ["Product detail", "Detail-to-checkout rate", "Fixed coin/cash split assumes enough coins", "Live rebalancing demo when coin balance is insufficient"],
+  ["Checkout confirm", "Checkout completion rate", "No failure states modeled (funds, payment, shipping)", "Insufficient-coin path handled; others noted as future work"],
+  ["Post-purchase", "Repeat redemption rate (the real retention metric)", "Easy to treat this as the end of the flow", "Streak screen ties this purchase to the next session, not just this one"],
+];
+
 export default function Home() {
   const [screen, setScreen] = useState(1);
   const [redeemedOnce, setRedeemedOnce] = useState(false);
   const [pickSetB, setPickSetB] = useState(false);
   const [lowCoinMode, setLowCoinMode] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   const [selected, setSelected] = useState(SET_A[0]);
   const [device, setDevice] = useState("web");
   const [narrow, setNarrow] = useState(false);
@@ -283,6 +336,84 @@ export default function Home() {
           <button className="btn btn-ghost bordered" onClick={() => go(screen > 1 ? screen - 1 : total)}>Back</button>
           <button className="btn btn-primary" onClick={() => go(screen < total ? screen + 1 : 1)}>Next step</button>
         </div>
+
+        <button className="note-toggle" onClick={() => setNoteOpen(!noteOpen)}>
+          {noteOpen ? "Hide product decisions & assumptions ▴" : "Show product decisions & assumptions ▾"}
+        </button>
+
+        {noteOpen && (
+          <div className="decision-note">
+            <h4>Core product question</h4>
+            <p style={{ fontStyle: "italic" }}>How should an in-game commerce store be different from a traditional e-commerce store?</p>
+            <p>
+              In traditional e-commerce, the user arrives with intent — they searched, compared, and are
+              ready to transact. In a game, the user has zero shopping intent; they&apos;re mid-flow,
+              focused on gameplay. So the store&apos;s entire job is different: it isn&apos;t about
+              optimizing a conversion funnel for existing intent, it&apos;s about <strong>not breaking
+              immersion</strong> while creating a believable reason to want something. Every decision
+              below is built around that single reframe.
+            </p>
+
+            <h4>How PlaySuper actually works (research grounding)</h4>
+            <p>Before designing, I looked into PlaySuper&apos;s real model rather than treating this as a generic exercise:</p>
+            <ul>
+              <li>A plug-and-play SDK that game studios integrate without disrupting gameplay.</li>
+              <li>In-game currency converts into real-world rewards sourced from a catalog of 5,000+ brands.</li>
+              <li>PlaySuper&apos;s core sell to studios is <strong>retention uplift</strong>, not just GMV.</li>
+              <li>Personalization is done via <strong>behavioral cohorts</strong>, not individual/personal data.</li>
+              <li>A real, stated challenge at their scale: catalog fragmentation — too many brands to show without overwhelming the player.</li>
+            </ul>
+
+            <h4>Key decisions, and why not the alternatives</h4>
+            {DECISIONS.map((d, i) => (
+              <div key={i} style={{ marginBottom: 10 }}>
+                <p style={{ fontWeight: 700, color: "var(--ink)", marginBottom: 2 }}>{i + 1}. {d.title}</p>
+                <p><strong>Why:</strong> {d.why}</p>
+                <p><strong>Why not the alternative:</strong> {d.alt}</p>
+              </div>
+            ))}
+
+            <h4>The funnel we&apos;re actually targeting</h4>
+            <p>
+              Most in-game-store prototypes stop at &quot;did they buy.&quot; PlaySuper&apos;s own stated
+              business metric is retention lift, not one-time conversion — so the funnel below is designed
+              around that, with the specific risk at every step and how the prototype addresses it.
+            </p>
+            <div className="funnel-table">
+              <div className="funnel-row funnel-head">
+                <div>Step</div><div>Metric</div><div>Risk</div><div>How it&apos;s addressed</div>
+              </div>
+              {FUNNEL.map((row, i) => (
+                <div className="funnel-row" key={i}>
+                  <div>{row[0]}</div><div>{row[1]}</div><div>{row[2]}</div><div>{row[3]}</div>
+                </div>
+              ))}
+            </div>
+            <p>
+              <strong>The single biggest risk we corrected for:</strong> a prototype that only optimizes
+              &quot;did they buy&quot; misses PlaySuper&apos;s actual point. The real product question is
+              whether having this store makes a player more likely to come back and play again — so the
+              flow doesn&apos;t end at the purchase, it ends at a designed reason to return.
+            </p>
+
+            <h4>Assumptions made</h4>
+            <ul>
+              <li>Single-player casual/hyper-casual mobile game.</li>
+              <li>Players already hold an earned in-game coin balance when the store first appears.</li>
+              <li>Checkout is a UI mock only — no real payment gateway is wired up.</li>
+              <li>&quot;Behavioral cohort&quot; curation is simulated with a toggleable alternate set rather than live personalization data.</li>
+              <li>Streak/cooldown logic is simplified to a single redemption cycle to keep the prototype legible within this assignment&apos;s scope.</li>
+            </ul>
+
+            <h4>AI / vibe-coding tools used</h4>
+            <p>
+              Built with Claude as a thinking partner for structuring the product decisions above and for
+              the interactive build (React/Next.js) — not as a one-shot generic template. Each edge case
+              (fallback picks, low-coin rebalancing, trigger cooldown, retention hook) was deliberately
+              designed and iterated on.
+            </p>
+          </div>
+        )}
       </div>
 
       <style jsx>{`
@@ -477,6 +608,22 @@ export default function Home() {
         .note-toggle { margin-top: 10px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.14); color: var(--ink-dim); font-size: 12.5px; font-family: var(--body); border-radius: 10px; padding: 9px 14px; cursor: pointer; }
         .note-toggle:hover { border-color: var(--gold); color: var(--gold); }
         .note-toggle.full { width: 100%; margin: 0 0 14px; }
+        .decision-note {
+          max-width: 760px; width: 100%; margin-top: 18px; background: rgba(26,20,56,0.92);
+          border: 1px solid rgba(255,255,255,0.1); border-radius: 18px; padding: 22px 24px;
+          font-size: 13.5px; line-height: 1.6; color: var(--ink-dim); box-sizing: border-box;
+        }
+        .decision-note h4 { font-family: var(--display); font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gold); margin: 18px 0 6px; }
+        .decision-note h4:first-child { margin-top: 0; }
+        .decision-note p { margin: 0 0 4px; }
+        .decision-note ul { margin: 0 0 8px; padding-left: 18px; }
+        .decision-note li { margin-bottom: 4px; }
+        .funnel-table { display: flex; flex-direction: column; gap: 1px; background: rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; margin: 10px 0 14px; }
+        .funnel-row { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1.4fr; gap: 8px; background: var(--bg-card); padding: 8px 10px; font-size: 11.5px; }
+        .funnel-row.funnel-head { background: #2a2158; font-family: var(--display); font-weight: 700; color: var(--gold); text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+        @media (max-width: 560px) {
+          .funnel-row { grid-template-columns: 1fr; }
+        }
         @media (max-width: 400px) {
           .phone { width: 300px; height: 620px; }
         }
